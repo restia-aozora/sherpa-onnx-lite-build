@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repository": "https://github.com/k2-fsa/sherpa-onnx.git",
+    "version": "1.13.8",
+    "commit": "11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf"
+  },
+  "android": {
+    "ndk": "28.2.13676358",
+    "api": 23,
+    "onnxruntime": "1.28.2",
+    "url": "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v1.28.2/onnxruntime-android-arm64-v8a-static_lib-1.28.2.zip",
+    "sha256": "bc68410f35f13df82c260830bf476ee5565f5efd0ec7622297829a929613c6c0"
+  },
+  "ios": {
+    "deploymentTarget": "14.0",
+    "onnxruntime": "1.28.2",
+    "url": "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v1.28.2/onnxruntime-ios-static-xcframework-1.28.2.xcframework.zip",
+    "sha256": "2c2299acbb461d26d4bac4bc85985d40e7c7177ed6072703ae0846d88b0b4599"
+  },
+  "harmony": {
+    "onnxruntime": "1.16.3",
+    "url": "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v1.16.3/onnxruntime-ohos-arm64-v8a-1.16.3.zip",
+    "sha256": "3367a54ef1f1c429d1116540e4e5bca98ff28b6de1603d53f4f73ebc24504b85",
+    "sdkConfiguration": "OHOS_SDK_NATIVE_DIR locally, or HARMONY_SDK_URL plus HARMONY_SDK_SHA256 in GitHub repository variables"
+  }
+}

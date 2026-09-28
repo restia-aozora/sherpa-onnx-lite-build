@@ -1,0 +1,94 @@
+name: Build lite native libraries
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Platform to build
+        required: true
+        type: choice
+        options: [android, ios, harmony]
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    if: inputs.platform == 'android'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: android-actions/setup-android@v3
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends ninja-build unzip
+          sdkmanager "platform-tools" "platforms;android-35" "ndk;28.2.13676358"
+      - name: Build Android ARM64 profile
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: python3 scripts/build.py android --jobs 2 --max-package-mib 55
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sherpa-onnx-lite-android-${{ github.run_id }}
+          path: dist/*android*.*
+          retention-days: 7
+
+  build-ios:
+    if: inputs.platform == 'ios'
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify Apple toolchain
+        run: |
+          xcodebuild -version
+          cmake --version
+          ninja --version
+      - name: Build iOS device ARM64 profile
+        run: python3 scripts/build.py ios --jobs 3 --max-package-mib 55
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sherpa-onnx-lite-ios-${{ github.run_id }}
+          path: dist/*ios*.*
+          retention-days: 7
+
+  build-harmony:
+    if: inputs.platform == 'harmony'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends ninja-build unzip
+      - name: Require verified Harmony SDK variables
+        env:
+          HARMONY_SDK_URL: ${{ vars.HARMONY_SDK_URL }}
+          HARMONY_SDK_SHA256: ${{ vars.HARMONY_SDK_SHA256 }}
+        run: |
+          test -n "$HARMONY_SDK_URL"
+          test -n "$HARMONY_SDK_SHA256"
+          echo "HARMONY_SDK_URL=$HARMONY_SDK_URL" >> "$GITHUB_ENV"
+          echo "HARMONY_SDK_SHA256=$HARMONY_SDK_SHA256" >> "$GITHUB_ENV"
+      - name: Build Harmony ARM64 profile
+        run: python3 scripts/build.py harmony --jobs 2 --max-package-mib 55
+      - name: Upload Harmony artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sherpa-onnx-lite-harmony-${{ github.run_id }}
+          path: dist/*harmony*.*
+          retention-days: 7
