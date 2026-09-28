@@ -76,7 +76,11 @@ This archive verification does not establish successful native compilation or
 device compatibility.
 
 After pushing workflow fixes, start a new **Build lite native libraries** run
-from the latest `main` and select `android`, `ios` or `harmony`. Re-running an old
+from the latest `main`. The default `all` option starts Android, iOS and Harmony
+as independent parallel jobs, each uploading its own artifact. A failure in one
+job does not cancel the others; runner availability may delay individual jobs.
+Select `android`, `ios` or `harmony` to build only one platform. Native builds
+remain manual-only: pushing commits does not start them. Re-running an old
 run uses its original commit. **Validate build scripts** only checks Python;
 it does not build native libraries. Android setup explicitly requests
 `platform-tools`, never the removed `tools` package. iOS export lists exclude

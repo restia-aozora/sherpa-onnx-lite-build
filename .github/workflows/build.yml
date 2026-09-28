@@ -4,17 +4,18 @@ on:
   workflow_dispatch:
     inputs:
       platform:
-        description: Platform to build
+        description: Platform to build (all runs all three platforms)
         required: true
         type: choice
-        options: [android, ios, harmony]
+        default: all
+        options: [all, android, ios, harmony]
 
 permissions:
   contents: read
 
 jobs:
   build-android:
-    if: inputs.platform == 'android'
+    if: inputs.platform == 'all' || inputs.platform == 'android'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -44,7 +45,7 @@ jobs:
           retention-days: 7
 
   build-ios:
-    if: inputs.platform == 'ios'
+    if: inputs.platform == 'all' || inputs.platform == 'ios'
     runs-on: macos-14
     timeout-minutes: 120
     steps:
@@ -67,7 +68,7 @@ jobs:
           retention-days: 7
 
   build-harmony:
-    if: inputs.platform == 'harmony'
+    if: inputs.platform == 'all' || inputs.platform == 'harmony'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
