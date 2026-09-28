@@ -98,6 +98,9 @@ def require_one(directory, pattern):
 
 
 def copy_file(source, destination):
+    # Upstream Harmony headers can already link to the source file.
+    if destination.exists() and source.samefile(destination):
+        return
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
 
