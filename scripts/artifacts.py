@@ -11,25 +11,34 @@ ANDROID_SYSTEM = {"libc.so", "libm.so", "libdl.so", "liblog.so", "libandroid.so"
 HARMONY_SYSTEM = {"libc.so", "libm.so", "libdl.so", "libace_napi.z.so", "libhilog_ndk.z.so", "librawfile.z.so"}
 
 
-def inspect_elf_header(filename, require_16k=False):
+def inspect_elf_header(filename, require_16k=False, abi="arm64-v8a"):
+    layouts = {
+        "arm64-v8a": (2, 183, 64, 32, "<Q", 54, 56, 48),
+        "armeabi-v7a": (1, 40, 52, 28, "<I", 42, 32, 28),
+    }
+    if abi not in layouts:
+        raise ValueError(f"Unsupported ELF ABI: {abi}")
+    elf_class, machine, header_size, offset_position, word_format, counts_position, segment_size, alignment_position = layouts[abi]
     with filename.open("rb") as stream:
-        header = stream.read(64)
-        if len(header) != 64 or header[:6] != b"\x7fELF\x02\x01":
-            raise ValueError(f"Not a little-endian ELF64 library: {filename}")
-        if struct.unpack_from("<H", header, 18)[0] != 183:
-            raise ValueError(f"Not AArch64: {filename}")
-        offset = struct.unpack_from("<Q", header, 32)[0]
-        entry_size, entry_count = struct.unpack_from("<HH", header, 54)
-        if entry_size < 56:
+        header = stream.read(header_size)
+        if len(header) != header_size or header[:6] != b"\x7fELF" + bytes((elf_class, 1)):
+            raise ValueError(f"Not a little-endian ELF for {abi}: {filename}")
+        if struct.unpack_from("<H", header, 18)[0] != machine:
+            raise ValueError(f"ELF machine does not match {abi}: {filename}")
+        offset = struct.unpack_from(word_format, header, offset_position)[0]
+        entry_size, entry_count = struct.unpack_from("<HH", header, counts_position)
+        if entry_size < segment_size:
             raise ValueError(f"Invalid program header size: {filename}")
         load_count = 0
         for index in range(entry_count):
             stream.seek(offset + index * entry_size)
             segment = stream.read(entry_size)
+            if len(segment) != entry_size:
+                raise ValueError(f"Truncated ELF program header: {filename}")
             if struct.unpack_from("<I", segment)[0] != 1:
                 continue
             load_count += 1
-            alignment = struct.unpack_from("<Q", segment, 48)[0]
+            alignment = struct.unpack_from(word_format, segment, alignment_position)[0]
             if require_16k and alignment < 16384:
                 raise ValueError(f"Android LOAD alignment below 16 KB: {filename}")
         if load_count == 0:
@@ -41,12 +50,12 @@ def elf_needed(filename, readelf):
     return re.findall(r"\(NEEDED\).*?\[([^]]+)\]", output)
 
 
-def verify_elf_package(libraries, platform, readelf, nm, c_symbols):
+def verify_elf_package(libraries, platform, readelf, nm, c_symbols, abi="arm64-v8a"):
     available = {filename.name for filename in libraries.glob("*.so")}
     system = ANDROID_SYSTEM if platform == "android" else HARMONY_SYSTEM
     report = {}
     for filename in libraries.glob("*.so"):
-        inspect_elf_header(filename, require_16k=platform == "android")
+        inspect_elf_header(filename, require_16k=platform == "android" and abi == "arm64-v8a", abi=abi)
         dependencies = elf_needed(filename, readelf)
         unresolved = set(dependencies) - available - system
         if unresolved:
@@ -95,12 +104,14 @@ def package_output(output, platform, metadata, max_package_mib):
     records = [{"path": filename.relative_to(output).as_posix(), "bytes": filename.stat().st_size,
                 "sha256": sha256_file(filename)}
                for filename in sorted(output.rglob("*")) if filename.is_file()]
-    metadata.update({"platform": platform, "architecture": "arm64", "files": records,
+    architectures = metadata.get("architectures", ["arm64"])
+    architecture = "-".join(architectures)
+    metadata.update({"platform": platform, "architecture": architecture, "files": records,
                      "uncompressedBytes": sum(record["bytes"] for record in records),
                      "modelInference": "NOT RUN", "utsCompilation": "NOT RUN",
                      "physicalDevice": "NOT RUN", "onnxruntimeOperatorPruning": False})
     (output / "manifest.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-    archive = output.parent / f"sherpa-onnx-lite-{platform}-arm64.zip"
+    archive = output.parent / f"sherpa-onnx-lite-{platform}-{architecture}.zip"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
         for filename in sorted(output.rglob("*")):
             if filename.is_file():
@@ -114,3 +125,4 @@ def package_output(output, platform, metadata, max_package_mib):
     print(json.dumps(summary, indent=2))
     if not summary["withinBudget"]:
         raise ValueError("Library archive exceeds configured budget; this budget is NOT the whole App upload size")
+    return archive, output.parent / f"{platform}-size-report.json"

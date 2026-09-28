@@ -1,4 +1,4 @@
-"""Build the pinned four-feature native profile without AAR/HAR packaging."""
+"""Build the pinned four-feature profile and a single selected-ABI Android AAR."""
 
 import argparse
 import json
@@ -11,10 +11,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+from android_aar import ANDROID_ABIS, build_android_aar, select_android_abis
 from artifacts import collect_licenses, elf_needed, package_output, verify_elf_package
 from build_support import (LOCK, ROOT, copy_file, download_verified, extract_zip,
                            prepare_harmony_sdk, require_one, run, sha256_file)
-from profile_lite import COMMIT, KOTLIN_FILES, prepare
+from profile_lite import COMMIT, prepare
 
 
 def configure_and_build(source, build, target, options, environment, jobs):
@@ -39,7 +40,8 @@ def configure_and_build(source, build, target, options, environment, jobs):
     run("cmake", "--build", build, "--target", target, "--parallel", jobs, environment=environment)
 
 
-def build_android(source, work, output, archive, environment, jobs, metadata):
+def build_android(source, work, output, environment, jobs, metadata, abis):
+    abis = select_android_abis(abis)
     ndk = Path(environment.get("ANDROID_NDK_HOME", environment.get("ANDROID_NDK", ""))).resolve()
     toolchain = ndk / "build/cmake/android.toolchain.cmake"
     if not toolchain.is_file():
@@ -48,26 +50,49 @@ def build_android(source, work, output, archive, environment, jobs, metadata):
     if len(hosts) != 1:
         raise ValueError("Expected exactly one NDK host toolchain")
     tools = hosts[0] / "bin"
-    copy_file(archive, source / Path(LOCK["android"]["url"]).name)
-    build = work / "build"
-    configure_and_build(source, build, "sherpa-onnx-jni", {
-        "CMAKE_TOOLCHAIN_FILE": toolchain, "ANDROID_ABI": "arm64-v8a",
-        "ANDROID_PLATFORM": f"android-{LOCK['android']['api']}", "ANDROID_STL": "c++_static",
-        "ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES": "ON", "BUILD_SHARED_LIBS": "OFF",
-        "SHERPA_ONNX_ENABLE_JNI": "ON", "SHERPA_ONNX_ENABLE_C_API": "OFF",
-        "SHERPA_ONNX_USE_PRE_INSTALLED_ONNXRUNTIME_IF_AVAILABLE": "OFF",
-        "CMAKE_SHARED_LINKER_FLAGS": "-Wl,--gc-sections,-z,max-page-size=16384,--no-undefined",
-    }, environment, jobs)
-    libraries = output / "app-android/libs/arm64-v8a"
-    library = libraries / "libsherpa-onnx-jni.so"
-    copy_file(require_one(build / "lib", library.name), library)
-    run(tools / "llvm-strip", "--strip-unneeded", library)
-    for filename in KOTLIN_FILES:
-        copy_file(source / "sherpa-onnx/kotlin-api" / filename, output / "app-android/kotlin" / filename)
-    metadata["dependencies"] = verify_elf_package(libraries, "android", tools / "llvm-readelf",
-                                                 tools / "llvm-nm", metadata["retainedCApiSymbols"])
+    sdk_value = environment.get("ANDROID_HOME") or environment.get("ANDROID_SDK_ROOT")
+    if not sdk_value:
+        raise ValueError("Set ANDROID_HOME or ANDROID_SDK_ROOT to an installed Android SDK")
+    sdk = Path(sdk_value).resolve()
+    compile_sdk = LOCK["android"]["aar"]["compileSdk"]
+    if not (sdk / f"platforms/android-{compile_sdk}/android.jar").is_file():
+        raise ValueError(f"Install Android SDK platform {compile_sdk} for AAR compilation")
+    environment["ANDROID_HOME"] = str(sdk)
+    environment["ANDROID_SDK_ROOT"] = str(sdk)
+    for tool in ("java", "bash"):
+        if not shutil.which(tool, path=environment.get("PATH")):
+            raise ValueError(f"Android AAR compilation requires {tool} (use JDK 17)")
+    native_libraries = work / "android-jni"
+    metadata["architectures"] = list(abis)
+    metadata["dependencies"] = {}
+    metadata["onnxruntimeArchives"] = {}
+    for abi in abis:
+        distribution = LOCK["android"]["abis"][abi]
+        abi_work = work / abi
+        archive = download_verified(distribution["url"], distribution["sha256"], abi_work / "onnxruntime.zip")
+        dependencies = abi_work / "onnxruntime"
+        extract_zip(archive, dependencies)
+        copy_file(archive, source / Path(distribution["url"]).name)
+        build = abi_work / "build"
+        configure_and_build(source, build, "sherpa-onnx-jni", {
+            "CMAKE_TOOLCHAIN_FILE": toolchain, "ANDROID_ABI": abi,
+            "ANDROID_PLATFORM": f"android-{LOCK['android']['api']}", "ANDROID_STL": "c++_static",
+            "ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES": "ON", "BUILD_SHARED_LIBS": "OFF",
+            "SHERPA_ONNX_ENABLE_JNI": "ON", "SHERPA_ONNX_ENABLE_C_API": "OFF",
+            "SHERPA_ONNX_USE_PRE_INSTALLED_ONNXRUNTIME_IF_AVAILABLE": "OFF",
+            "CMAKE_SHARED_LINKER_FLAGS": "-Wl,--gc-sections,-z,max-page-size=16384,--no-undefined",
+        }, environment, jobs)
+        libraries = native_libraries / abi
+        library = libraries / "libsherpa-onnx-jni.so"
+        copy_file(require_one(build / "lib", library.name), library)
+        run(tools / "llvm-strip", "--strip-unneeded", library)
+        metadata["dependencies"][abi] = verify_elf_package(
+            libraries, "android", tools / "llvm-readelf", tools / "llvm-nm",
+            metadata["retainedCApiSymbols"], abi=abi)
+        metadata["onnxruntimeArchives"][abi] = distribution
+        collect_licenses(source, build, dependencies, output)
     metadata["toolchain"] = (ndk / "source.properties").read_text()
-    return build
+    return build_android_aar(source, work, native_libraries, output, abis, environment, metadata)
 
 
 def build_ios(source, work, output, dependencies, environment, jobs, metadata):
@@ -184,9 +209,14 @@ def main():
     parser.add_argument("platform", choices=("android", "ios", "harmony"))
     parser.add_argument("--jobs", type=int, default=3)
     parser.add_argument("--max-package-mib", type=float, default=55)
+    parser.add_argument("--android-abis", nargs="+", choices=ANDROID_ABIS,
+                        help="Android ABIs to combine in one AAR; default: arm64-v8a")
     arguments = parser.parse_args()
     if arguments.jobs < 1 or not 0 < arguments.max_package_mib < 1024:
         parser.error("jobs must be positive and package budget must be between 0 and 1024 MiB")
+    if arguments.android_abis is not None and arguments.platform != "android":
+        parser.error("--android-abis is only valid for Android")
+    android_abis = select_android_abis(arguments.android_abis)
     if arguments.platform == "ios" and sys.platform != "darwin":
         parser.error("iOS requires macOS/Xcode; use the GitHub Actions macOS job")
     if arguments.platform in ("android", "harmony") and sys.platform != "linux":
@@ -211,29 +241,32 @@ def main():
     run("git", "-C", source, "checkout", "--detach", "FETCH_HEAD")
     metadata = prepare(source, arguments.platform)
     metadata["host"] = platform.platform()
-    metadata["profile"] = "paraformer-zipformer-silero-vits-cpu-arm64"
+    metadata["profile"] = "paraformer-zipformer-silero-vits-cpu"
     metadata["onnxruntime"] = LOCK[arguments.platform]["onnxruntime"]
-    distribution = LOCK[arguments.platform]
-    archive = download_verified(distribution["url"], distribution["sha256"], work / "onnxruntime.zip")
-    dependencies = work / "onnxruntime"
-    extract_zip(archive, dependencies)
     output = work / "package"
     output.mkdir()
+    android_aar = None
     if arguments.platform == "android":
-        build = build_android(source, work, output, archive, environment, arguments.jobs, metadata)
-    elif arguments.platform == "ios":
-        build = build_ios(source, work, output, dependencies, environment, arguments.jobs, metadata)
+        android_aar = build_android(source, work, output, environment, arguments.jobs, metadata, android_abis)
     else:
-        build = build_harmony(source, work, output, dependencies, native, environment, arguments.jobs, metadata)
-    collect_licenses(source, build, dependencies, output)
+        distribution = LOCK[arguments.platform]
+        archive = download_verified(distribution["url"], distribution["sha256"], work / "onnxruntime.zip")
+        dependencies = work / "onnxruntime"
+        extract_zip(archive, dependencies)
+        if arguments.platform == "ios":
+            build = build_ios(source, work, output, dependencies, environment, arguments.jobs, metadata)
+        else:
+            build = build_harmony(source, work, output, dependencies, native, environment, arguments.jobs, metadata)
+        collect_licenses(source, build, dependencies, output)
     copy_file(ROOT / "README.md", output / "INTEGRATION.md")
     copy_file(ROOT / "dependencies.json", output / "dependencies.json")
-    package_output(output, arguments.platform, metadata, arguments.max_package_mib)
+    packaged_files = package_output(output, arguments.platform, metadata, arguments.max_package_mib)
     destination = ROOT / "dist"
     destination.mkdir(exist_ok=True)
-    for filename in (work / f"sherpa-onnx-lite-{arguments.platform}-arm64.zip",
-                     work / f"{arguments.platform}-size-report.json"):
+    for filename in packaged_files:
         copy_file(filename, destination / filename.name)
+    if android_aar is not None:
+        copy_file(android_aar, destination / android_aar.name)
 
 
 if __name__ == "__main__":

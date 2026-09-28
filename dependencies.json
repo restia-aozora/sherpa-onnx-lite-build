@@ -8,8 +8,23 @@
     "ndk": "28.2.13676358",
     "api": 23,
     "onnxruntime": "1.28.2",
-    "url": "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v1.28.2/onnxruntime-android-arm64-v8a-static_lib-1.28.2.zip",
-    "sha256": "bc68410f35f13df82c260830bf476ee5565f5efd0ec7622297829a929613c6c0"
+    "aar": {
+      "compileSdk": 34,
+      "gradle": "8.6",
+      "gradleSha256": "9631d53cf3e74bfa726893aee1f8994fee4e060c401335946dba2156f440f24c",
+      "androidGradlePlugin": "8.4.0",
+      "kotlin": "1.7.20"
+    },
+    "abis": {
+      "arm64-v8a": {
+        "url": "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v1.28.2/onnxruntime-android-arm64-v8a-static_lib-1.28.2.zip",
+        "sha256": "bc68410f35f13df82c260830bf476ee5565f5efd0ec7622297829a929613c6c0"
+      },
+      "armeabi-v7a": {
+        "url": "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v1.28.2/onnxruntime-android-armeabi-v7a-static_lib-1.28.2.zip",
+        "sha256": "21f8aaab5d536f397a11deeedc09c2ceecc740b45332d8a946c358e7717b5f18"
+      }
+    }
   },
   "ios": {
     "deploymentTarget": "14.0",
