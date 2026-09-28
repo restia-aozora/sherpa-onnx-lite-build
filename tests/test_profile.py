@@ -46,6 +46,56 @@ int untouched() { return 17; }
                        "SherpaOnnxCreateOfflineSpeakerDiarization", "SherpaOnnxCreateOnlineSpeechDenoiser"):
             self.assertFalse(profile.keep_c_symbol(symbol), symbol)
 
+    def test_common_c_api_excludes_harmony_resource_manager_constructors(self):
+        profile = self.load_profile()
+        for symbol in ("SherpaOnnxCreateOnlineRecognizerOHOS",
+                       "SherpaOnnxCreateOfflineRecognizerOHOS",
+                       "SherpaOnnxCreateVoiceActivityDetectorOHOS",
+                       "SherpaOnnxCreateOfflineTtsOHOS"):
+            with self.subTest(symbol=symbol):
+                self.assertFalse(profile.keep_c_symbol(symbol), symbol)
+
+    def test_harmony_exports_add_resource_manager_constructors_without_losing_common_api(self):
+        profile = self.load_profile()
+        common_symbols = ["SherpaOnnxCreateOfflineRecognizer", "SherpaOnnxOfflineTtsNumSpeakers"]
+        expected = {
+            "SherpaOnnxCreateOfflineRecognizer", "SherpaOnnxOfflineTtsNumSpeakers",
+            "SherpaOnnxCreateOnlineRecognizerOHOS", "SherpaOnnxCreateOfflineRecognizerOHOS",
+            "SherpaOnnxCreateVoiceActivityDetectorOHOS", "SherpaOnnxCreateOfflineTtsOHOS",
+        }
+        self.assertEqual(profile.add_harmony_exports(common_symbols), sorted(expected))
+        self.assertEqual(common_symbols, ["SherpaOnnxCreateOfflineRecognizer", "SherpaOnnxOfflineTtsNumSpeakers"])
+
+    def test_platform_selection_keeps_harmony_symbols_only_on_harmony(self):
+        profile = self.load_profile()
+        common_symbols = {
+            "SherpaOnnxCreateOfflineRecognizer", "SherpaOnnxCreateOnlineRecognizer",
+            "SherpaOnnxCreateVoiceActivityDetector", "SherpaOnnxCreateOfflineTts",
+            "SherpaOnnxOfflineTtsNumSpeakers",
+        }
+        harmony_symbols = {
+            "SherpaOnnxCreateOnlineRecognizerOHOS", "SherpaOnnxCreateOfflineRecognizerOHOS",
+            "SherpaOnnxCreateVoiceActivityDetectorOHOS", "SherpaOnnxCreateOfflineTtsOHOS",
+        }
+        upstream_symbols = sorted(common_symbols | {"SherpaOnnxCreateKeywordSpotter"})
+        for target_platform in ("android", "ios", "harmony"):
+            for input_symbols in (upstream_symbols, upstream_symbols + sorted(harmony_symbols)):
+                with self.subTest(platform=target_platform, includes_ohos=len(input_symbols) > len(upstream_symbols)):
+                    expected = common_symbols | harmony_symbols if target_platform == "harmony" else common_symbols
+                    self.assertEqual(profile.select_c_api_symbols(input_symbols, target_platform), sorted(expected))
+
+    def test_platform_selection_rejects_unknown_platform(self):
+        profile = self.load_profile()
+        with self.assertRaisesRegex(ValueError, "Unsupported target platform"):
+            profile.select_c_api_symbols(["SherpaOnnxCreateOfflineRecognizer"], "unknown")
+
+    def test_platform_selection_rejects_empty_or_unreduced_exports(self):
+        profile = self.load_profile()
+        for symbols in ([], ["SherpaOnnxCreateKeywordSpotter"], ["SherpaOnnxCreateOfflineRecognizer"]):
+            with self.subTest(symbols=symbols):
+                with self.assertRaisesRegex(ValueError, "did not reduce"):
+                    profile.select_c_api_symbols(symbols, "ios")
+
 
 if __name__ == "__main__":
     unittest.main()

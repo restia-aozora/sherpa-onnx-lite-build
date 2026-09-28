@@ -2,9 +2,10 @@
 
 This repository builds an ARM64-only native profile of sherpa-onnx 1.13.8 for
 the Aozora UTS plugin. It retains CPU Paraformer offline ASR, Zipformer or
-Zipformer2 streaming ASR, Silero VAD and VITS TTS. It deliberately does not
-build keyword spotting, speaker identification/diarization, punctuation,
-audio tagging, speech enhancement, NPU providers or simulator slices.
+Zipformer2 streaming ASR, Silero VAD and VITS TTS. Model factories and public
+exports exclude unrelated features. Some upstream implementation files still
+compile into intermediate static archives; final binary size must be measured.
+NPU providers and simulator slices are disabled.
 
 The output is source plus native libraries, not an Android AAR or Harmony HAR:
 
@@ -56,10 +57,30 @@ Public repositories can use standard GitHub-hosted runners without Actions
 minute charges. The iOS job uses a macOS standard runner; it does not need an
 Apple signing identity because it produces an unsigned/ad-hoc native library.
 
-Before enabling the Harmony job, create repository variables:
+Before enabling the Harmony job, configure repository Actions settings:
 
-- `HARMONY_SDK_URL`: an authorized Linux Harmony Native SDK archive URL.
-- `HARMONY_SDK_SHA256`: the lowercase SHA-256 of that exact archive.
+- Secret `HARMONY_SDK_URL`: an authorized Linux Harmony Native SDK archive URL.
+  Use a secret for signed URLs; do not commit their query parameters. An existing
+  repository variable with the same name remains supported as a fallback.
+- Variable `HARMONY_SDK_SHA256`: the lowercase SHA-256 of that exact archive.
+
+The ZIP must contain an unpacked Native SDK with `build/cmake/ohos.toolchain.cmake`,
+`llvm/bin/clang` and `llvm/bin/llvm-readelf`. An application `.har` is not a compiler
+toolchain. A Windows or macOS host SDK cannot run on the Linux Harmony runner.
+The official `commandline-tools-linux-x64-26.0.0.851.zip` contains this SDK under
+`command-line-tools/sdk/default/openharmony/native`. Its verified SHA-256 is
+`ab604bd92721d5cbcafd154e6461d46b9f1b105e7b89eab04a9d046681198082`.
+The build extracts only the Native SDK subtree, preserving executable modes and
+internal symlinks, and rejects archives with missing or ambiguous toolchains.
+This archive verification does not establish successful native compilation or
+device compatibility.
+
+After pushing workflow fixes, start a new **Build lite native libraries** run
+from the latest `main` and select `android`, `ios` or `harmony`. Re-running an old
+run uses its original commit. **Validate build scripts** only checks Python;
+it does not build native libraries. Android setup explicitly requests
+`platform-tools`, never the removed `tools` package. iOS export lists exclude
+OHOS-only constructors; those are retained only for Harmony's C API checks.
 
 Artifacts are retained for seven days and are not committed to Git. Do not
 upload business source, model files, signing certificates, private keys or

@@ -51,6 +51,8 @@ def replace_factories(source, class_name, render_body, expected_count=2):
 
 
 def keep_c_symbol(symbol):
+    if symbol.endswith("OHOS"):
+        return False
     excluded = ("AudioTagging", "SpokenLanguage", "Keyword", "Speaker", "Denoiser",
                 "Punctuation", "Diacritization", "SourceSeparation", "WithZipvoice")
     # NumSpeakers belongs to VITS and must survive the general speaker exclusion.
@@ -80,6 +82,17 @@ def add_harmony_exports(symbols):
     return sorted(set(symbols) | required)
 
 
+def select_c_api_symbols(symbols, target_platform):
+    if target_platform not in ("android", "ios", "harmony"):
+        raise ValueError(f"Unsupported target platform: {target_platform}")
+    common_symbols = sorted({symbol for symbol in symbols if keep_c_symbol(symbol)})
+    if not common_symbols or len(common_symbols) >= len(symbols):
+        raise ValueError("C API export filtering did not reduce the upstream API")
+    if target_platform == "harmony":
+        return add_harmony_exports(common_symbols)
+    return common_symbols
+
+
 def retain_cmake_sources(source, retained):
     found = set(re.findall(r"^\s+([\w-]+\.cc)\s*$", source, re.M))
     if not retained <= found:
@@ -88,7 +101,7 @@ def retain_cmake_sources(source, retained):
                   match.group() if match.group(1) in retained else "", source, flags=re.M)
 
 
-def prepare(source_root):
+def prepare(source_root, target_platform):
     actual = subprocess.check_output(["git", "-C", str(source_root), "rev-parse", "HEAD"], text=True).strip()
     dirty = subprocess.check_output(["git", "-C", str(source_root), "status", "--porcelain"], text=True).strip()
     if actual != COMMIT or dirty:
@@ -151,10 +164,9 @@ def prepare(source_root):
 
     exports = source_root / "sherpa-onnx/c-api/sherpa-onnx-symbols-c.exp"
     symbols = [line[1:] for line in exports.read_text().splitlines() if line.startswith("_")]
-    selected = add_harmony_exports([symbol for symbol in symbols if keep_c_symbol(symbol)])
-    if not selected or len(selected) >= len(symbols):
-        raise ValueError("C API export filtering did not reduce the upstream API")
-    updates[exports] = "".join(f"_{symbol}\n" for symbol in selected)
+    selected = select_c_api_symbols(symbols, target_platform)
+    # Apple exports must never reference OHOS-only implementations.
+    updates[exports] = "".join(f"_{symbol}\n" for symbol in selected if not symbol.endswith("OHOS"))
     updates[exports.with_suffix(".lds")] = ("{\n  global:\n" +
         "".join(f"    {symbol};\n" for symbol in selected) + "  local: *;\n};\n")
     for target, content in updates.items():
@@ -166,5 +178,6 @@ def prepare(source_root):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
+    parser.add_argument("--platform", required=True, choices=("android", "ios", "harmony"))
     arguments = parser.parse_args()
-    print(json.dumps(prepare(arguments.source.resolve()), indent=2))
+    print(json.dumps(prepare(arguments.source.resolve(), arguments.platform), indent=2))

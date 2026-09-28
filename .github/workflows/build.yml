@@ -18,22 +18,26 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4.0.4
+        with:
+          packages: 'platform-tools'
+          log-accepted-android-sdk-licenses: false
       - name: Install native build tools
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends ninja-build unzip
           sdkmanager "platform-tools" "platforms;android-35" "ndk;28.2.13676358"
       - name: Build Android ARM64 profile
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
-        run: python3 scripts/build.py android --jobs 2 --max-package-mib 55
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_HOME:?Android SDK location is missing}/ndk/28.2.13676358"
+          test -f "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+          python3 scripts/build.py android --jobs 2 --max-package-mib 55
       - name: Upload Android artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: sherpa-onnx-lite-android-${{ github.run_id }}
           path: dist/*android*.*
@@ -44,8 +48,8 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
       - name: Verify Apple toolchain
@@ -56,7 +60,7 @@ jobs:
       - name: Build iOS device ARM64 profile
         run: python3 scripts/build.py ios --jobs 3 --max-package-mib 55
       - name: Upload iOS artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: sherpa-onnx-lite-ios-${{ github.run_id }}
           path: dist/*ios*.*
@@ -67,27 +71,30 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
       - name: Install native build tools
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends ninja-build unzip
-      - name: Require verified Harmony SDK variables
+      - name: Build Harmony ARM64 profile
         env:
-          HARMONY_SDK_URL: ${{ vars.HARMONY_SDK_URL }}
+          HARMONY_SDK_URL: ${{ secrets.HARMONY_SDK_URL || vars.HARMONY_SDK_URL }}
           HARMONY_SDK_SHA256: ${{ vars.HARMONY_SDK_SHA256 }}
         run: |
-          test -n "$HARMONY_SDK_URL"
-          test -n "$HARMONY_SDK_SHA256"
-          echo "HARMONY_SDK_URL=$HARMONY_SDK_URL" >> "$GITHUB_ENV"
-          echo "HARMONY_SDK_SHA256=$HARMONY_SDK_SHA256" >> "$GITHUB_ENV"
-      - name: Build Harmony ARM64 profile
-        run: python3 scripts/build.py harmony --jobs 2 --max-package-mib 55
+          if [[ -z "$HARMONY_SDK_URL" || -z "$HARMONY_SDK_SHA256" ]]; then
+            echo "::error::Configure repository secret HARMONY_SDK_URL and variable HARMONY_SDK_SHA256 before building Harmony."
+            exit 1
+          fi
+          if [[ ! "$HARMONY_SDK_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::HARMONY_SDK_SHA256 must be a lowercase 64-character SHA-256 digest."
+            exit 1
+          fi
+          python3 scripts/build.py harmony --jobs 2 --max-package-mib 55
       - name: Upload Harmony artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: sherpa-onnx-lite-harmony-${{ github.run_id }}
           path: dist/*harmony*.*

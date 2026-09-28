@@ -209,7 +209,7 @@ def main():
     run("git", "init", source)
     run("git", "-C", source, "fetch", "--depth=1", LOCK["source"]["repository"], COMMIT)
     run("git", "-C", source, "checkout", "--detach", "FETCH_HEAD")
-    metadata = prepare(source)
+    metadata = prepare(source, arguments.platform)
     metadata["host"] = platform.platform()
     metadata["profile"] = "paraformer-zipformer-silero-vits-cpu-arm64"
     metadata["onnxruntime"] = LOCK[arguments.platform]["onnxruntime"]
