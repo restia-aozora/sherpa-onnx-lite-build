@@ -55,6 +55,24 @@ int untouched() { return 17; }
             with self.subTest(symbol=symbol):
                 self.assertFalse(profile.keep_c_symbol(symbol), symbol)
 
+    def test_harmony_streaming_bridge_display_dependencies_survive_filtering(self):
+        profile = self.load_profile()
+        display_symbols = {
+            "SherpaOnnxCreateDisplay", "SherpaOnnxDestroyDisplay", "SherpaOnnxPrint",
+        }
+        upstream_symbols = sorted(display_symbols | {
+            "SherpaOnnxCreateOnlineRecognizer", "SherpaOnnxCreateKeywordSpotter",
+        })
+        for target_platform in ("android", "ios", "harmony"):
+            with self.subTest(platform=target_platform):
+                selected = set(profile.select_c_api_symbols(upstream_symbols, target_platform))
+                self.assertIn("SherpaOnnxCreateOnlineRecognizer", selected)
+                self.assertNotIn("SherpaOnnxCreateKeywordSpotter", selected)
+                if target_platform == "harmony":
+                    self.assertEqual(display_symbols - selected, set())
+                else:
+                    self.assertEqual(display_symbols & selected, set())
+
     def test_harmony_exports_add_resource_manager_constructors_without_losing_common_api(self):
         profile = self.load_profile()
         common_symbols = ["SherpaOnnxCreateOfflineRecognizer", "SherpaOnnxOfflineTtsNumSpeakers"]
@@ -62,6 +80,7 @@ int untouched() { return 17; }
             "SherpaOnnxCreateOfflineRecognizer", "SherpaOnnxOfflineTtsNumSpeakers",
             "SherpaOnnxCreateOnlineRecognizerOHOS", "SherpaOnnxCreateOfflineRecognizerOHOS",
             "SherpaOnnxCreateVoiceActivityDetectorOHOS", "SherpaOnnxCreateOfflineTtsOHOS",
+            "SherpaOnnxCreateDisplay", "SherpaOnnxDestroyDisplay", "SherpaOnnxPrint",
         }
         self.assertEqual(profile.add_harmony_exports(common_symbols), sorted(expected))
         self.assertEqual(common_symbols, ["SherpaOnnxCreateOfflineRecognizer", "SherpaOnnxOfflineTtsNumSpeakers"])
@@ -76,6 +95,7 @@ int untouched() { return 17; }
         harmony_symbols = {
             "SherpaOnnxCreateOnlineRecognizerOHOS", "SherpaOnnxCreateOfflineRecognizerOHOS",
             "SherpaOnnxCreateVoiceActivityDetectorOHOS", "SherpaOnnxCreateOfflineTtsOHOS",
+            "SherpaOnnxCreateDisplay", "SherpaOnnxDestroyDisplay", "SherpaOnnxPrint",
         }
         upstream_symbols = sorted(common_symbols | {"SherpaOnnxCreateKeywordSpotter"})
         for target_platform in ("android", "ios", "harmony"):

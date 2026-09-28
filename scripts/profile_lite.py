@@ -72,12 +72,16 @@ def keep_c_symbol(symbol):
 
 
 def add_harmony_exports(symbols):
-    """Keep only the resource-manager constructors used by the ArkTS bridge."""
+    """Keep the resource-manager and display APIs used by the ArkTS bridge."""
     required = {
         "SherpaOnnxCreateOnlineRecognizerOHOS",
         "SherpaOnnxCreateOfflineRecognizerOHOS",
         "SherpaOnnxCreateVoiceActivityDetectorOHOS",
         "SherpaOnnxCreateOfflineTtsOHOS",
+        # streaming-asr.cc still registers display wrappers in the lite bridge.
+        "SherpaOnnxCreateDisplay",
+        "SherpaOnnxDestroyDisplay",
+        "SherpaOnnxPrint",
     }
     return sorted(set(symbols) | required)
 
