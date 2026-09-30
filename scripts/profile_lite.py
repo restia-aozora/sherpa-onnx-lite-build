@@ -112,21 +112,33 @@ def prepare(source_root, target_platform):
         raise ValueError("Source must be a clean checkout of the pinned commit; never patch a user's dirty tree")
     updates = {}
     factory_profiles = (
-        ("offline-recognizer-impl.cc", "OfflineRecognizerImpl", "OfflineRecognizerParaformerImpl",
-         "!config.model_config.paraformer.model.empty()"),
-        ("online-recognizer-impl.cc", "OnlineRecognizerImpl", "OnlineRecognizerTransducerImpl",
-         "!config.model_config.transducer.encoder.empty()"),
-        ("offline-tts-impl.cc", "OfflineTtsImpl", "OfflineTtsVitsImpl", "!config.model.vits.model.empty()"),
-        ("vad-model.cc", "VadModel", "SileroVadModel", "!config.silero_vad.model.empty()"),
+        ("offline-recognizer-impl.cc", "OfflineRecognizerImpl", (
+            ("OfflineRecognizerParaformerImpl", "!config.model_config.paraformer.model.empty()"),
+            ("OfflineRecognizerSenseVoiceImpl", "!config.model_config.sense_voice.model.empty()"),
+        )),
+        ("online-recognizer-impl.cc", "OnlineRecognizerImpl", (
+            ("OnlineRecognizerTransducerImpl", "!config.model_config.transducer.encoder.empty()"),
+            ("OnlineRecognizerParaformerImpl", "!config.model_config.paraformer.encoder.empty()"),
+        )),
+        ("offline-tts-impl.cc", "OfflineTtsImpl", (
+            ("OfflineTtsVitsImpl", "!config.model.vits.model.empty()"),
+        )),
+        ("vad-model.cc", "VadModel", (
+            ("SileroVadModel", "!config.silero_vad.model.empty()"),
+        )),
     )
-    for filename, class_name, implementation, condition in factory_profiles:
+    for filename, class_name, implementations in factory_profiles:
         target = source_root / "sherpa-onnx/csrc" / filename
-        def body(signature, implementation=implementation, condition=condition):
+        def body(signature, implementations=implementations):
             arguments = "mgr, config" if "Manager *mgr" in signature else "config"
-            return (f"  if ({condition}) {{\n"
-                    f"    return std::make_unique<{implementation}>({arguments});\n  }}\n"
-                    '  SHERPA_ONNX_LOGE("Unsupported model in the four-feature lite build");\n'
-                    "  return nullptr;")
+            branches = "".join(
+                f"  if ({condition}) {{\n"
+                f"    return std::make_unique<{implementation}>({arguments});\n  }}\n"
+                for implementation, condition in implementations
+            )
+            return (branches
+                    + '  SHERPA_ONNX_LOGE("Unsupported model in the lite build");\n'
+                    + "  return nullptr;")
         updates[target] = replace_factories(target.read_text(encoding="utf-8"), class_name, body)
 
     # Keep metadata-based Zipformer/Zipformer2 selection, but remove other constructor references.
@@ -139,9 +151,9 @@ def prepare(source_root, target_platform):
     updates[target] = content
 
     validations = (
-        ("offline-model-config.cc", "OfflineModelConfig", "paraformer.model.empty()"),
+        ("offline-model-config.cc", "OfflineModelConfig", "paraformer.model.empty() && sense_voice.model.empty()"),
         ("online-model-config.cc", "OnlineModelConfig",
-         'transducer.encoder.empty() || (!model_type.empty() && model_type != "zipformer" && model_type != "zipformer2")'),
+         'paraformer.encoder.empty() && (transducer.encoder.empty() || (!model_type.empty() && model_type != "zipformer" && model_type != "zipformer2"))'),
         ("offline-tts-model-config.cc", "OfflineTtsModelConfig", "vits.model.empty()"),
         ("vad-model-config.cc", "VadModelConfig", "silero_vad.model.empty()"),
     )

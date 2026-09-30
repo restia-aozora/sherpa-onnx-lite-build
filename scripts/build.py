@@ -1,4 +1,4 @@
-"""Build the pinned four-feature profile and a single selected-ABI Android AAR."""
+"""Build the pinned multilingual lite profile and a selected-ABI Android AAR."""
 
 import argparse
 import json
@@ -241,7 +241,7 @@ def main():
     run("git", "-C", source, "checkout", "--detach", "FETCH_HEAD")
     metadata = prepare(source, arguments.platform)
     metadata["host"] = platform.platform()
-    metadata["profile"] = "paraformer-zipformer-silero-vits-cpu"
+    metadata["profile"] = "sensevoice-paraformer-offline-paraformer-zipformer-online-silero-vits-cpu"
     metadata["onnxruntime"] = LOCK[arguments.platform]["onnxruntime"]
     output = work / "package"
     output.mkdir()

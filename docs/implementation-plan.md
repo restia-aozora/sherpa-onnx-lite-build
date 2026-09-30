@@ -3,15 +3,20 @@
 ## Approved scope
 
 Build native libraries for Android, iOS and HarmonyOS, retaining offline
-Paraformer ASR, streaming Zipformer/Zipformer2 transducer ASR, Silero VAD and
+Paraformer and SenseVoice ASR, streaming Paraformer and Zipformer/Zipformer2 transducer ASR, Silero VAD and
 VITS TTS. Use the same sherpa-onnx commit as the consuming UTS plugin.
 Do not copy business code, models, credentials or signing identities.
 
+The multilingual extension changes build sources only; the user rebuilds and
+integrates the native artifacts. Existing application AAR/SO files are not
+replaced. Android plugin adaptation does not imply iOS/Harmony adaptation.
+
 ## Architecture
 
-- ARM64 devices only. No Android AAR, Harmony HAR or simulator slices.
+- Android supports selectable ARM64 and ARMv7 ABIs in one AAR. iOS and Harmony
+  remain ARM64-only. No Harmony HAR or simulator slices.
 - Android: statically link the upstream ORT distribution into JNI; ship
-  matching Kotlin source files, not a classes.jar.
+  matching compiled Kotlin classes.jar and selected JNI libraries in the AAR.
 - iOS: statically link ORT into SherpaOnnxC.framework, wrapped in a device-only
   XCFramework for the existing Swift module import. No distribution identity
   is required; the consuming app must embed/re-sign it.
@@ -39,6 +44,10 @@ Do not copy business code, models, credentials or signing identities.
 ## Runtime acceptance before integrating
 
 - Paraformer: fixed WAV fixture produces expected nonempty text.
+- SenseVoice: fixed Mandarin/English/Cantonese WAV fixtures exercise automatic
+  language selection, inverse text normalization and Silero segmentation.
+- Streaming Paraformer: external PCM, final flush, repeated sessions and
+  cancellation work without a transducer joiner; assess mixed-language speech.
 - Zipformer: streaming PCM and final flush produce results; repeated sessions
   and cancellation release resources.
 - Silero: silence and speech fixtures exercise trim/compact modes.
@@ -49,4 +58,5 @@ Do not copy business code, models, credentials or signing identities.
 - Harmony: verify ARM64, N-API registration, dependency closure, wrapper import
   and actual HBuilderX/Hvigor integration.
 
-No changes are made to the application until these gates are reviewed.
+Do not claim native build or device-inference success until these gates pass.
+Application source/model preparation is separate from native artifact integration.

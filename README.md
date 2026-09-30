@@ -1,9 +1,9 @@
 # sherpa-onnx-lite-build
 
-This repository builds a four-feature native profile of sherpa-onnx 1.13.8 for
+This repository builds a multilingual lite native profile of sherpa-onnx 1.13.8 for
 the Aozora UTS plugin. Android supports selectable `arm64-v8a` and `armeabi-v7a`
 ABIs, individually or together in one AAR. iOS and Harmony remain ARM64-only.
-It retains CPU Paraformer offline ASR, Zipformer or
+It retains CPU Paraformer and SenseVoice offline ASR, Paraformer and Zipformer or
 Zipformer2 streaming ASR, Silero VAD and VITS TTS. Model factories and public
 exports exclude unrelated features. Some upstream implementation files still
 compile into intermediate static archives; final binary size must be measured.
@@ -23,12 +23,12 @@ Harmony:  app-harmony/libs/arm64-v8a/*.so
 
 | Feature | Native profile |
 | --- | --- |
-| Offline ASR | Paraformer only |
-| Streaming ASR | Zipformer / Zipformer2 transducer only; not Zipformer2 CTC |
+| Offline ASR | Paraformer and SenseVoice |
+| Streaming ASR | Paraformer and Zipformer / Zipformer2 transducer; not Zipformer2 CTC |
 | Voice activity detection | Silero VAD only |
 | Text to speech | VITS only |
 | Common helpers | Audio features, WAV I/O, resampling, buffering, version/configuration APIs |
-| Other model engines | No factory entry for Whisper, SenseVoice, other CTC engines, Matcha, Kokoro, etc. |
+| Other model engines | No factory entry for Whisper, other CTC engines, Matcha, Kokoro, etc. |
 | Other public feature families | Keyword spotting, speaker identification/diarization, audio tagging, denoising, punctuation, etc. are excluded from selected exports/bridges |
 | GPU/NPU providers | Disabled in the build configuration |
 
@@ -54,7 +54,7 @@ This is **feature-entry-point pruning, not a proven minimal binary**:
   it is not a ZIP of Kotlin sources renamed to `.aar`.
 - The build is intentionally fail-closed on the pinned upstream commit and
   SHA-256 locked ONNX Runtime archives.
-- No model is included. The application must provide the Paraformer,
+- No model is included. The application must provide the SenseVoice, Paraformer,
   Zipformer, Silero VAD and VITS model files it actually uses.
 - `runtimeValidation`, UTS compilation and physical-device validation are
   reported as `NOT RUN` until the generated artifact is tested in the consuming
@@ -62,6 +62,30 @@ This is **feature-entry-point pruning, not a proven minimal binary**:
   upload is below its quota.
 
 ## Local build prerequisites
+
+### Existing applications need a rebuilt runtime
+
+The expanded profile adds offline SenseVoice and streaming Paraformer in both
+filesystem and resource-manager factories, and permits them through the model
+validation guards. Existing Paraformer offline, Zipformer/Zipformer2 streaming,
+Silero VAD and VITS paths remain enabled. The upstream commit, CPU-only settings,
+dependency locks and 55-MiB integration archive limit are unchanged.
+
+Changing these scripts does not update an already shipped AAR or custom base.
+Rebuild the selected Android ABIs, integrate that AAR yourself, and rebuild the
+Android custom base before testing the new models. No consuming application's
+native binaries are replaced by this source change. Android UTS/Kotlin model
+adaptation does not imply equivalent iOS or Harmony plugin adaptation.
+
+The intended application pair is offline
+`sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17` with automatic language
+and inverse text normalization, and streaming
+`sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en` with INT8 encoder
+and decoder. Streaming Paraformer does not use a transducer joiner. Actual
+recognition quality, peak memory and expanded native binary size require builds
+and physical-device validation; Python tests alone do not establish these.
+
+### Host and build commands
 
 Use Linux, WSL2 or GitHub Actions for Android and Harmony. Use macOS with
 Xcode, CMake and Ninja for iOS. Windows PowerShell is supported for editing
@@ -188,7 +212,7 @@ python3 -m py_compile scripts/*.py
 ```
 
 The native build checks linkage, exported APIs, target architecture, license
-collection and archive size. It cannot replace four-feature model inference
+collection and archive size. It cannot replace retained-model inference
 tests in the actual Android, iOS and Harmony applications.
 
 The Python tests also cover ABI selection, ELF32/ELF64 validation, AAR structure,
