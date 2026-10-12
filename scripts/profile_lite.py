@@ -26,6 +26,14 @@ HARMONY_INITIALIZERS = {
     "InitStreamingAsr", "InitNonStreamingAsr", "InitNonStreamingTts", "InitVad",
     "InitWaveReader", "InitWaveWriter", "InitVersion", "InitResampler", "InitUtils",
 }
+ONLINE_CTC_SOURCES = {
+    "online-ctc-model.cc", "online-zipformer2-ctc-model.cc",
+    "online-zipformer2-ctc-model-config.cc", "online-ctc-greedy-search-decoder.cc",
+    "online-ctc-fst-decoder.cc", "online-ctc-fst-decoder-config.cc",
+    "online-recognizer-impl.cc", "online-model-config.cc", "online-stream.cc",
+    # OnlineRecognizerCtcImpl references NormalizeFeatures, even for non-Whisper models.
+    "offline-whisper-model.cc",
+}
 NON_CODE = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*.*?\*/', re.S)
 
 
@@ -105,6 +113,30 @@ def retain_cmake_sources(source, retained):
                   match.group() if match.group(1) in retained else "", source, flags=re.M)
 
 
+def prune_online_ctc_factory(source):
+    expected_signatures = {
+        "OnlineCtcModel::Create(const OnlineModelConfig &config)": "config",
+        "OnlineCtcModel::Create(Manager *mgr, const OnlineModelConfig &config)": "mgr, config",
+    }
+    seen_signatures = set()
+
+    def body(signature):
+        normalized = re.sub(r"\s+", " ", signature).strip().replace("( ", "(")
+        if normalized not in expected_signatures or normalized in seen_signatures:
+            raise ValueError(f"Unexpected CTC factory signature: {normalized}")
+        seen_signatures.add(normalized)
+        arguments = expected_signatures[normalized]
+        return (
+            "  if (!config.zipformer2_ctc.model.empty()) {\n"
+            f"    return std::make_unique<OnlineZipformer2CtcModel>({arguments});\n"
+            "  }\n"
+            '  SHERPA_ONNX_LOGE("Unsupported CTC model in the lite build");\n'
+            "  return nullptr;"
+        )
+
+    return replace_factories(source, "OnlineCtcModel", body)
+
+
 def prepare(source_root, target_platform):
     actual = subprocess.check_output(["git", "-C", str(source_root), "rev-parse", "HEAD"], text=True).strip()
     dirty = subprocess.check_output(["git", "-C", str(source_root), "status", "--porcelain"], text=True).strip()
@@ -119,6 +151,7 @@ def prepare(source_root, target_platform):
         ("online-recognizer-impl.cc", "OnlineRecognizerImpl", (
             ("OnlineRecognizerTransducerImpl", "!config.model_config.transducer.encoder.empty()"),
             ("OnlineRecognizerParaformerImpl", "!config.model_config.paraformer.encoder.empty()"),
+            ("OnlineRecognizerCtcImpl", "!config.model_config.zipformer2_ctc.model.empty()"),
         )),
         ("offline-tts-impl.cc", "OfflineTtsImpl", (
             ("OfflineTtsVitsImpl", "!config.model.vits.model.empty()"),
@@ -141,6 +174,15 @@ def prepare(source_root, target_platform):
                     + "  return nullptr;")
         updates[target] = replace_factories(target.read_text(encoding="utf-8"), class_name, body)
 
+    target = source_root / "sherpa-onnx/csrc/online-ctc-model.cc"
+    updates[target] = prune_online_ctc_factory(target.read_text(encoding="utf-8"))
+    # Do not prune shared implementation sources: CTC also needs the upstream FST
+    # decoder and Whisper feature-normalization helper for successful linkage.
+    native_cmake = (source_root / "sherpa-onnx/csrc/CMakeLists.txt").read_text(encoding="utf-8")
+    native_sources = set(re.findall(r"^\s+([\w-]+\.cc)\s*$", native_cmake, re.M))
+    if not ONLINE_CTC_SOURCES <= native_sources:
+        raise ValueError(f"Missing online CTC native sources: {sorted(ONLINE_CTC_SOURCES - native_sources)}")
+
     # Keep metadata-based Zipformer/Zipformer2 selection, but remove other constructor references.
     target = source_root / "sherpa-onnx/csrc/online-transducer-model.cc"
     content, count = re.subn(
@@ -153,7 +195,7 @@ def prepare(source_root, target_platform):
     validations = (
         ("offline-model-config.cc", "OfflineModelConfig", "paraformer.model.empty() && sense_voice.model.empty()"),
         ("online-model-config.cc", "OnlineModelConfig",
-         'paraformer.encoder.empty() && (transducer.encoder.empty() || (!model_type.empty() && model_type != "zipformer" && model_type != "zipformer2"))'),
+         'zipformer2_ctc.model.empty() && paraformer.encoder.empty() && (transducer.encoder.empty() || (!model_type.empty() && model_type != "zipformer" && model_type != "zipformer2"))'),
         ("offline-tts-model-config.cc", "OfflineTtsModelConfig", "vits.model.empty()"),
         ("vad-model-config.cc", "VadModelConfig", "silero_vad.model.empty()"),
     )
@@ -188,7 +230,10 @@ def prepare(source_root, target_platform):
     for target, content in updates.items():
         target.write_text(content, encoding="utf-8", newline="\n")
     return {"sourceCommit": actual, "changedFiles": [str(target.relative_to(source_root)) for target in updates],
-            "retainedCApiSymbols": selected, "runtimeValidation": "NOT RUN"}
+            "retainedCApiSymbols": selected, "runtimeValidation": "NOT RUN",
+            "enabledModels": {"offline": ["paraformer", "sense_voice"],
+                              "online": ["paraformer", "zipformer", "zipformer2", "zipformer2_ctc"],
+                              "vad": ["silero_vad"], "tts": ["vits"]}}
 
 
 if __name__ == "__main__":

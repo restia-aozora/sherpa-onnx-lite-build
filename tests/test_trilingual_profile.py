@@ -22,13 +22,22 @@ class TrilingualProfileTests(unittest.TestCase):
         for filename, class_name in (
             ("offline-recognizer-impl.cc", "OfflineRecognizerImpl"),
             ("online-recognizer-impl.cc", "OnlineRecognizerImpl"),
+            ("online-ctc-model.cc", "OnlineCtcModel"),
             ("offline-tts-impl.cc", "OfflineTtsImpl"),
             ("vad-model.cc", "VadModel"),
         ):
+            config_type = "OnlineModelConfig" if class_name == "OnlineCtcModel" else "Config"
             (self.csrc / filename).write_text(
-                f"auto {class_name}::Create(const Config &config) {{ return unrelated(); }}\n"
-                f"auto {class_name}::Create(Manager *mgr, const Config &config) {{ return unrelated(); }}\n",
+                f"auto {class_name}::Create(const {config_type} &config) {{ return unrelated(); }}\n"
+                f"auto {class_name}::Create(Manager *mgr, const {config_type} &config) {{ return unrelated(); }}\n",
                 encoding="utf-8")
+        (self.csrc / "CMakeLists.txt").write_text(
+            "set(sources\n"
+            "  online-ctc-model.cc\n  online-zipformer2-ctc-model.cc\n"
+            "  online-zipformer2-ctc-model-config.cc\n  online-ctc-greedy-search-decoder.cc\n"
+            "  online-ctc-fst-decoder.cc\n  online-ctc-fst-decoder-config.cc\n"
+            "  online-recognizer-impl.cc\n  online-model-config.cc\n  online-stream.cc\n"
+            "  offline-whisper-model.cc\n)\n", encoding="utf-8")
         for filename, class_name in (
             ("offline-model-config.cc", "OfflineModelConfig"),
             ("online-model-config.cc", "OnlineModelConfig"),

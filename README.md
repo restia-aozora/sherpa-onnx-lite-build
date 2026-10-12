@@ -3,9 +3,9 @@
 This repository builds a multilingual lite native profile of sherpa-onnx 1.13.8 for
 the Aozora UTS plugin. Android supports selectable `arm64-v8a` and `armeabi-v7a`
 ABIs, individually or together in one AAR. iOS and Harmony remain ARM64-only.
-It retains CPU Paraformer and SenseVoice offline ASR, Paraformer and Zipformer or
-Zipformer2 streaming ASR, Silero VAD and VITS TTS. Model factories and public
-exports exclude unrelated features. Some upstream implementation files still
+It retains CPU Paraformer and SenseVoice offline ASR, Paraformer, Zipformer or
+Zipformer2 transducer and Zipformer2 CTC streaming ASR, Silero VAD and VITS TTS.
+Model factories and public exports exclude unrelated features. Some upstream implementation files still
 compile into intermediate static archives; final binary size must be measured.
 NPU providers and simulator slices are disabled.
 
@@ -24,7 +24,7 @@ Harmony:  app-harmony/libs/arm64-v8a/*.so
 | Feature | Native profile |
 | --- | --- |
 | Offline ASR | Paraformer and SenseVoice |
-| Streaming ASR | Paraformer and Zipformer / Zipformer2 transducer; not Zipformer2 CTC |
+| Streaming ASR | Paraformer, Zipformer / Zipformer2 transducer, and Zipformer2 CTC |
 | Voice activity detection | Silero VAD only |
 | Text to speech | VITS only |
 | Common helpers | Audio features, WAV I/O, resampling, buffering, version/configuration APIs |
@@ -65,10 +65,11 @@ This is **feature-entry-point pruning, not a proven minimal binary**:
 
 ### Existing applications need a rebuilt runtime
 
-The expanded profile adds offline SenseVoice and streaming Paraformer in both
-filesystem and resource-manager factories, and permits them through the model
-validation guards. Existing Paraformer offline, Zipformer/Zipformer2 streaming,
-Silero VAD and VITS paths remain enabled. The upstream commit, CPU-only settings,
+The expanded profile adds offline SenseVoice, streaming Paraformer and streaming
+Zipformer2 CTC in both filesystem and resource-manager factories, and permits
+them through the model validation guards. Existing Paraformer offline,
+Zipformer/Zipformer2 transducer, Silero VAD and VITS paths remain enabled.
+The upstream commit, CPU-only settings,
 dependency locks and 55-MiB integration archive limit are unchanged.
 
 Changing these scripts does not update an already shipped AAR or custom base.
@@ -84,6 +85,30 @@ and inverse text normalization, and streaming
 and decoder. Streaming Paraformer does not use a transducer joiner. Actual
 recognition quality, peak memory and expanded native binary size require builds
 and physical-device validation; Python tests alone do not establish these.
+
+### Streaming Zipformer2 CTC
+
+Android, iOS and Harmony share the same native profile. Configure the upstream
+online `zipformer2_ctc.model` field plus tokens, not the offline `zipformer_ctc`
+field or a transducer encoder/decoder/joiner triple. Greedy search is the default
+integration path; transducer hotword/beam settings are not CTC settings. The
+consuming plugin is responsible for validating its public configuration.
+
+The top-level factory selects `OnlineRecognizerCtcImpl`, whose `OnlineCtcModel`
+sub-factory retains **only** `OnlineZipformer2CtcModel`. WeNet, NeMo and T-one CTC
+constructors are removed from both sub-factory overloads; an unsupported model
+returns null. This does not enable another online or offline CTC model family.
+The pinned upstream CTC/FST decoder sources and the Whisper feature-normalization
+helper remain in CMake: the shared recognizer references these symbols even when
+the integration does not use a decoding graph or Whisper features. Retaining a
+helper for linkage does not restore the Whisper model factory.
+
+Package manifests for all three platforms now include `enabledModels.online`
+with `zipformer2_ctc` and an updated `profile` identifier. These describe the
+build profile, not device-test results. Existing AARs, XCFrameworks and Harmony
+native libraries must be rebuilt and integrated before this source capability
+can be used. This change does not rebuild an artifact, download model weights,
+prove a smaller binary, or claim inference/real-device validation.
 
 ### Host and build commands
 
@@ -210,6 +235,15 @@ tokens to this repository.
 python3 -m unittest discover -s tests -p 'test_*.py'
 python3 -m py_compile scripts/*.py
 ```
+
+To additionally exercise the transformations against the actual pinned upstream
+files without modifying that checkout or downloading anything, point
+`SHERPA_ONNX_UPSTREAM_SOURCE` at a local sherpa-onnx Git repository containing
+commit `11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf` before running unittest. The
+optional test uses `git show` to copy only the needed committed files into
+temporary directories and verifies Android, iOS and Harmony source generation.
+It does not compile native code or run a model. The normal fixture tests also
+check CTC signature drift and missing linker-source anchors before any writes.
 
 The native build checks linkage, exported APIs, target architecture, license
 collection and archive size. It cannot replace retained-model inference
