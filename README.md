@@ -3,8 +3,9 @@
 This repository builds a multilingual lite native profile of sherpa-onnx 1.13.8 for
 the Aozora UTS plugin. Android supports selectable `arm64-v8a` and `armeabi-v7a`
 ABIs, individually or together in one AAR. iOS and Harmony remain ARM64-only.
-It retains CPU Paraformer and SenseVoice offline ASR, Paraformer, Zipformer or
-Zipformer2 transducer and Zipformer2 CTC streaming ASR, Silero VAD and VITS TTS.
+It retains CPU Paraformer, SenseVoice and Zipformer / Zipformer2 transducer
+offline ASR, Paraformer, Zipformer / Zipformer2 transducer and Zipformer2 CTC
+streaming ASR, Silero VAD and VITS TTS.
 Model factories and public exports exclude unrelated features. Some upstream implementation files still
 compile into intermediate static archives; final binary size must be measured.
 NPU providers and simulator slices are disabled.
@@ -23,7 +24,7 @@ Harmony:  app-harmony/libs/arm64-v8a/*.so
 
 | Feature | Native profile |
 | --- | --- |
-| Offline ASR | Paraformer and SenseVoice |
+| Offline ASR | Paraformer, SenseVoice, and Zipformer / Zipformer2 transducer |
 | Streaming ASR | Paraformer, Zipformer / Zipformer2 transducer, and Zipformer2 CTC |
 | Voice activity detection | Silero VAD only |
 | Text to speech | VITS only |
@@ -65,10 +66,11 @@ This is **feature-entry-point pruning, not a proven minimal binary**:
 
 ### Existing applications need a rebuilt runtime
 
-The expanded profile adds offline SenseVoice, streaming Paraformer and streaming
-Zipformer2 CTC in both filesystem and resource-manager factories, and permits
-them through the model validation guards. Existing Paraformer offline,
-Zipformer/Zipformer2 transducer, Silero VAD and VITS paths remain enabled.
+The expanded profile adds offline Zipformer / Zipformer2 transducer alongside
+offline Paraformer and SenseVoice, streaming Paraformer, streaming
+Zipformer / Zipformer2 transducer and streaming Zipformer2 CTC in both filesystem
+and resource-manager factories, and permits them through the model validation
+guards. Silero VAD and VITS paths remain enabled.
 The upstream commit, CPU-only settings,
 dependency locks and 55-MiB integration archive limit are unchanged.
 
@@ -78,13 +80,63 @@ Android custom base before testing the new models. No consuming application's
 native binaries are replaced by this source change. Android UTS/Kotlin model
 adaptation does not imply equivalent iOS or Harmony plugin adaptation.
 
-The intended application pair is offline
+An existing compatible example pair is offline
 `sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17` with automatic language
 and inverse text normalization, and streaming
 `sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en` with INT8 encoder
 and decoder. Streaming Paraformer does not use a transducer joiner. Actual
 recognition quality, peak memory and expanded native binary size require builds
 and physical-device validation; Python tests alone do not establish these.
+
+### X-ASR streaming and dedicated offline models
+
+The intended new pair is streaming **X-ASR 480 ms INT8 2026-06-05** and dedicated
+offline **X-ASR Zipformer transducer zh-en punct INT8 2026-06-03**. Keep their
+directories and matching encoder/decoder/joiner/tokens separate. The offline
+model is not a streaming recognizer with a longer input chunk. Embedded
+punctuation in the offline ASR model does not enable the excluded standalone
+punctuation engine.
+
+Configure the offline `transducer.encoder_filename`, `decoder_filename` and
+`joiner_filename` fields plus tokens; the online fields are named `encoder`,
+`decoder` and `joiner` instead. An offline `model_type` hint may be empty,
+`transducer`, `zipformer` or `zipformer2`. The hint never bypasses the encoder's
+actual `model_type` metadata check: only `zipformer` and `zipformer2` are routed
+to `OfflineRecognizerTransducerImpl`, while missing or unsupported metadata
+returns null. Conformer and NeMo transducers remain excluded.
+
+The pinned revision has **one shared `OfflineTransducerModel` and no offline
+Zipformer/Zipformer2 model sub-factory or per-family model classes**. Its real
+family-selection point is `OfflineRecognizerImpl::Create`. The lite transform
+restricts that metadata route in both filesystem and templated Manager
+overloads, preserving Android `AAssetManager` and Harmony
+`NativeResourceManager` instantiations. The metadata-probe session (and Manager
+buffer) is destroyed before constructing the complete triple; probing still
+requires an extra encoder load and is not a measured initialization-cost or
+memory guarantee. Existing Paraformer and SenseVoice routes do not use this
+probe. Upstream validation for tokens and all three transducer files remains.
+
+The pinned X-ASR non-streaming exporter test identifies encoder metadata as
+`zipformer2`. The punct exporter uses INT32 lengths and decoder inputs; the
+pinned offline engine already handles INT32/INT64 casts. The exporter test's
+INT8 example uses `encoder-epoch-99-avg-1.int8.onnx`,
+`decoder-epoch-99-avg-1.onnx` and `joiner-epoch-99-avg-1.int8.onnx`: an INT8 model
+bundle does not imply every file has an `.int8.onnx` suffix. Use the actual
+matching files supplied with the selected model, not guessed names from the
+streaming bundle. No model files were downloaded for this source extension.
+
+Future package metadata adds `zipformer` and `zipformer2` to
+`enabledModels.offline` without removing existing offline/online/VAD/TTS
+entries. The build profile identifier becomes
+`sensevoice-paraformer-zipformer-zipformer2-offline-paraformer-zipformer-zipformer2ctc-online-silero-vits-cpu`.
+These are build-time source capabilities, not claims about already shipped
+binaries. No historical artifact manifest, AAR, XCFramework or Harmony `.so`
+is changed. Rebuild and integrate the selected native platforms and custom base
+before trying the dedicated offline model. Plugin/platform adaptation remains
+the responsibility of the consuming app. Tests, native builds, model inference,
+archive-size measurement and physical-device validation for this source-only
+extension are all **NOT RUN**; the 55-MiB integration archive limit, ABI choices,
+CPU settings, upstream commit and dependency locks are unchanged.
 
 ### Streaming Zipformer2 CTC
 
@@ -243,7 +295,11 @@ commit `11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf` before running unittest. The
 optional test uses `git show` to copy only the needed committed files into
 temporary directories and verifies Android, iOS and Harmony source generation.
 It does not compile native code or run a model. The normal fixture tests also
-check CTC signature drift and missing linker-source anchors before any writes.
+check offline factory and CTC signature drift and missing linker-source anchors
+before any writes. Offline source-profile tests cover both metadata-gated
+Zipformer transducer overloads, retained engines and capability serialization
+without claiming inference results. These tests were added but not executed
+for the source-only X-ASR extension.
 
 The native build checks linkage, exported APIs, target architecture, license
 collection and archive size. It cannot replace retained-model inference

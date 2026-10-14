@@ -241,7 +241,7 @@ def main():
     run("git", "-C", source, "checkout", "--detach", "FETCH_HEAD")
     metadata = prepare(source, arguments.platform)
     metadata["host"] = platform.platform()
-    metadata["profile"] = "sensevoice-paraformer-offline-paraformer-zipformer-zipformer2ctc-online-silero-vits-cpu"
+    metadata["profile"] = "sensevoice-paraformer-zipformer-zipformer2-offline-paraformer-zipformer-zipformer2ctc-online-silero-vits-cpu"
     metadata["onnxruntime"] = LOCK[arguments.platform]["onnxruntime"]
     output = work / "package"
     output.mkdir()

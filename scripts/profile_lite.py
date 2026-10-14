@@ -137,17 +137,80 @@ def prune_online_ctc_factory(source):
     return replace_factories(source, "OnlineCtcModel", body)
 
 
+def prune_offline_recognizer_factory(source):
+    expected_signatures = {
+        "OfflineRecognizerImpl::Create(const OfflineRecognizerConfig &config)": "config",
+        "OfflineRecognizerImpl::Create(Manager *mgr, const OfflineRecognizerConfig &config)": "mgr, config",
+    }
+    seen_signatures = set()
+
+    def body(signature):
+        normalized = re.sub(r"\s+", " ", signature).strip().replace("( ", "(")
+        if normalized not in expected_signatures or normalized in seen_signatures:
+            raise ValueError(f"Unexpected offline factory signature: {normalized}")
+        seen_signatures.add(normalized)
+        arguments = expected_signatures[normalized]
+        if arguments == "mgr, config":
+            encoder_session_source = (
+                "      auto model_data = ReadFile(mgr, config.model_config.transducer.encoder_filename);\n"
+                "      auto encoder_session = std::make_unique<Ort::Session>(\n"
+                "          env, model_data.data(), model_data.size(), session_options);\n"
+            )
+        else:
+            encoder_session_source = (
+                "      auto encoder_session = std::make_unique<Ort::Session>(\n"
+                "          env, SHERPA_ONNX_TO_ORT_PATH(config.model_config.transducer.encoder_filename),\n"
+                "          session_options);\n"
+            )
+        # Pinned offline transducers share one model class. Unlike the online
+        # sub-factory, family selection lives in the recognizer's metadata probe.
+        return (
+            "  if (!config.model_config.paraformer.model.empty()) {\n"
+            f"    return std::make_unique<OfflineRecognizerParaformerImpl>({arguments});\n"
+            "  }\n"
+            "  if (!config.model_config.sense_voice.model.empty()) {\n"
+            f"    return std::make_unique<OfflineRecognizerSenseVoiceImpl>({arguments});\n"
+            "  }\n"
+            "  if (!config.model_config.transducer.encoder_filename.empty() &&\n"
+            "      (config.model_config.model_type.empty() ||\n"
+            '       config.model_config.model_type == "transducer" ||\n'
+            '       config.model_config.model_type == "zipformer" ||\n'
+            '       config.model_config.model_type == "zipformer2")) {\n'
+            "    std::string model_type;\n"
+            "    {\n"
+            "      Ort::Env env = ORT_LOGGING_LEVEL_ERROR;\n"
+            "      Ort::SessionOptions session_options;\n"
+            "      session_options.SetIntraOpNumThreads(1);\n"
+            "      session_options.SetInterOpNumThreads(1);\n"
+            + encoder_session_source
+            + "      Ort::ModelMetadata model_metadata = encoder_session->GetModelMetadata();\n"
+            "      Ort::AllocatorWithDefaultOptions allocator;\n"
+            '      model_type = LookupCustomModelMetaData(model_metadata, "model_type", allocator);\n'
+            "    }\n"
+            "    // Release the probe session and resource buffer before loading all three models.\n"
+            '    if (model_type == "zipformer" || model_type == "zipformer2") {\n'
+            f"      return std::make_unique<OfflineRecognizerTransducerImpl>({arguments});\n"
+            "    }\n"
+            '    SHERPA_ONNX_LOGE("Offline transducer model_type not enabled in lite build: %s",\n'
+            "                     model_type.c_str());\n"
+            "    return nullptr;\n"
+            "  }\n"
+            '  SHERPA_ONNX_LOGE("Unsupported model in the lite build");\n'
+            "  return nullptr;"
+        )
+
+    return replace_factories(source, "OfflineRecognizerImpl", body)
+
+
 def prepare(source_root, target_platform):
     actual = subprocess.check_output(["git", "-C", str(source_root), "rev-parse", "HEAD"], text=True).strip()
     dirty = subprocess.check_output(["git", "-C", str(source_root), "status", "--porcelain"], text=True).strip()
     if actual != COMMIT or dirty:
         raise ValueError("Source must be a clean checkout of the pinned commit; never patch a user's dirty tree")
     updates = {}
+    target = source_root / "sherpa-onnx/csrc/offline-recognizer-impl.cc"
+    updates[target] = prune_offline_recognizer_factory(target.read_text(encoding="utf-8"))
     factory_profiles = (
-        ("offline-recognizer-impl.cc", "OfflineRecognizerImpl", (
-            ("OfflineRecognizerParaformerImpl", "!config.model_config.paraformer.model.empty()"),
-            ("OfflineRecognizerSenseVoiceImpl", "!config.model_config.sense_voice.model.empty()"),
-        )),
         ("online-recognizer-impl.cc", "OnlineRecognizerImpl", (
             ("OnlineRecognizerTransducerImpl", "!config.model_config.transducer.encoder.empty()"),
             ("OnlineRecognizerParaformerImpl", "!config.model_config.paraformer.encoder.empty()"),
@@ -193,7 +256,8 @@ def prepare(source_root, target_platform):
     updates[target] = content
 
     validations = (
-        ("offline-model-config.cc", "OfflineModelConfig", "paraformer.model.empty() && sense_voice.model.empty()"),
+        ("offline-model-config.cc", "OfflineModelConfig",
+         'paraformer.model.empty() && sense_voice.model.empty() && (transducer.encoder_filename.empty() || (!model_type.empty() && model_type != "transducer" && model_type != "zipformer" && model_type != "zipformer2"))'),
         ("online-model-config.cc", "OnlineModelConfig",
          'zipformer2_ctc.model.empty() && paraformer.encoder.empty() && (transducer.encoder.empty() || (!model_type.empty() && model_type != "zipformer" && model_type != "zipformer2"))'),
         ("offline-tts-model-config.cc", "OfflineTtsModelConfig", "vits.model.empty()"),
@@ -231,7 +295,7 @@ def prepare(source_root, target_platform):
         target.write_text(content, encoding="utf-8", newline="\n")
     return {"sourceCommit": actual, "changedFiles": [str(target.relative_to(source_root)) for target in updates],
             "retainedCApiSymbols": selected, "runtimeValidation": "NOT RUN",
-            "enabledModels": {"offline": ["paraformer", "sense_voice"],
+            "enabledModels": {"offline": ["paraformer", "sense_voice", "zipformer", "zipformer2"],
                               "online": ["paraformer", "zipformer", "zipformer2", "zipformer2_ctc"],
                               "vad": ["silero_vad"], "tts": ["vits"]}}
 

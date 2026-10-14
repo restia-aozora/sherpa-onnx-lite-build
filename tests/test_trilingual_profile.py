@@ -26,7 +26,10 @@ class TrilingualProfileTests(unittest.TestCase):
             ("offline-tts-impl.cc", "OfflineTtsImpl"),
             ("vad-model.cc", "VadModel"),
         ):
-            config_type = "OnlineModelConfig" if class_name == "OnlineCtcModel" else "Config"
+            config_type = {
+                "OnlineCtcModel": "OnlineModelConfig",
+                "OfflineRecognizerImpl": "OfflineRecognizerConfig",
+            }.get(class_name, "Config")
             (self.csrc / filename).write_text(
                 f"auto {class_name}::Create(const {config_type} &config) {{ return unrelated(); }}\n"
                 f"auto {class_name}::Create(Manager *mgr, const {config_type} &config) {{ return unrelated(); }}\n",
@@ -76,7 +79,8 @@ class TrilingualProfileTests(unittest.TestCase):
     def test_both_resource_and_path_factories_retain_new_and_existing_models(self):
         self.prepare()
         expectations = {
-            "offline-recognizer-impl.cc": ("OfflineRecognizerParaformerImpl", "OfflineRecognizerSenseVoiceImpl"),
+            "offline-recognizer-impl.cc": ("OfflineRecognizerParaformerImpl", "OfflineRecognizerSenseVoiceImpl",
+                                           "OfflineRecognizerTransducerImpl"),
             "online-recognizer-impl.cc": ("OnlineRecognizerTransducerImpl", "OnlineRecognizerParaformerImpl"),
         }
         for filename, implementations in expectations.items():
@@ -86,13 +90,16 @@ class TrilingualProfileTests(unittest.TestCase):
                     self.assertIn(f"std::make_unique<{implementation}>(config)", output)
                     self.assertIn(f"std::make_unique<{implementation}>(mgr, config)", output)
             self.assertNotIn("unrelated()", output)
-            self.assertEqual(output.count("return nullptr;"), 2)
+            expected_null_returns = 4 if filename == "offline-recognizer-impl.cc" else 2
+            self.assertEqual(output.count("return nullptr;"), expected_null_returns)
 
-    def test_validation_allows_both_offline_models_and_both_streaming_families(self):
+    def test_validation_allows_retained_offline_and_streaming_families(self):
         self.prepare()
         offline = (self.csrc / "offline-model-config.cc").read_text(encoding="utf-8")
         online = (self.csrc / "online-model-config.cc").read_text(encoding="utf-8")
-        self.assertIn("if (paraformer.model.empty() && sense_voice.model.empty())", offline)
+        self.assertIn("paraformer.model.empty() && sense_voice.model.empty()", offline)
+        self.assertIn("transducer.encoder_filename.empty()", offline)
+        self.assertIn('model_type != "transducer"', offline)
         self.assertIn("paraformer.encoder.empty() && (transducer.encoder.empty()", online)
         self.assertIn('model_type != "zipformer" && model_type != "zipformer2"', online)
         for output in (offline, online):
